@@ -1,0 +1,190 @@
+package main
+
+import (
+	"compress/gzip"
+	"flag"
+	"fmt"
+	"io"
+	"io/ioutil"
+	"log"
+	"os"
+	"strconv"
+)
+
+type scoreList struct {
+	Objective string
+	Lock      bool
+	Score     int
+	Name      string
+}
+
+var (
+	filePath        = flag.String("file", "", "scoreboard.dat file Path")
+	binary          = []byte{}
+	scores          = []scoreList{}
+	replaceFrom     = flag.String("from", "", "scoreboard.dat file Path")
+	replaceTo       = flag.String("to", "", "scoreboard.dat file Path")
+	playerScores    = 0
+	removeReplaceTo = false
+)
+
+func main() {
+	//flag 入手
+	flag.Parse()
+
+	handle, err := os.Open(*filePath)
+	if err != nil {
+		log.Println("ファイルの読み込みに失敗しました")
+		log.Println("--Error-- --Error-- --Error-- --Error-- --Error-- --Error-- --Error--")
+		log.Println(err)
+		log.Println("--Error-- --Error-- --Error-- --Error-- --Error-- --Error-- --Error--")
+		return
+	}
+	defer handle.Close()
+	zipReader, err := gzip.NewReader(handle)
+	if err != nil {
+		log.Println("ファイルの展開に失敗しました")
+		log.Println("--Error-- --Error-- --Error-- --Error-- --Error-- --Error-- --Error--")
+		log.Println(err)
+		log.Println("--Error-- --Error-- --Error-- --Error-- --Error-- --Error-- --Error--")
+		return
+	}
+	defer zipReader.Close()
+	binary, err = ioutil.ReadAll(zipReader)
+	if err != nil {
+		log.Println("ファイルの展開データの読み取りに失敗しました")
+		log.Println("--Error-- --Error-- --Error-- --Error-- --Error-- --Error-- --Error--")
+		log.Println(err)
+		log.Println("--Error-- --Error-- --Error-- --Error-- --Error-- --Error-- --Error--")
+		return
+	}
+
+	for i := 0; i < len(binary)-9; i++ {
+		//スタート入手
+		if string(binary[i:i+9]) == "Objective" {
+			log.Println("Playerに設定されたスコアを発見しました.")
+			i = i + 9 + 1 //"Objective"の長さ
+			ObjectiveLength, _ := strconv.Atoi(fmt.Sprint(binary[i]))
+			i = i + ObjectiveLength + 3
+			LockedLength, _ := strconv.Atoi(fmt.Sprint(binary[i]))
+			i = i + LockedLength + 1 + 3
+			ScoreLength, _ := strconv.Atoi(fmt.Sprint(binary[i]))
+			i = i + ScoreLength + 4 + 3
+			i = i + 4 + 2 //"Name"の長さ
+			NameLength, _ := strconv.Atoi(fmt.Sprint(binary[i]))
+			i = i + 1
+			switch {
+			case string(binary[i:i+NameLength]) == *replaceFrom:
+				log.Print("MCID: " + string(binary[i:i+NameLength]) + " を置換しました")
+				//名前を[]byte化
+				replaceToByte := []byte(*replaceTo)
+				//名前の長さ
+				replaceToNameLength := byte(len(replaceToByte))
+				//書き換えデータを作成
+				dummyByteArray := []byte{}
+				dummyByteArray = append(dummyByteArray, binary[:i-1]...)
+				dummyByteArray = append(dummyByteArray, replaceToNameLength)
+				dummyByteArray = append(dummyByteArray, replaceToByte...)
+				dummyByteArray = append(dummyByteArray, binary[i+NameLength:]...)
+				//保存
+				binary = dummyByteArray
+				//移動
+				i = i + len(replaceToByte) + 2
+				//後々のためにcount
+				playerScores++
+				break
+			case string(binary[i:i+NameLength]) == *replaceTo:
+				log.Print("MCID: " + string(binary[i:i+NameLength]) + " を削除しました")
+				//今の範囲を削除
+				n := i + 0
+				for ; true; n-- {
+					if string(binary[n+4:n+4+9]) == "Objective" {
+						break
+					}
+				}
+				dummyByteArray := []byte{}
+				dummyByteArray = append(dummyByteArray, binary[:n]...)
+				dummyByteArray = append(dummyByteArray, binary[i+NameLength:]...)
+				//保存
+				binary = dummyByteArray
+				//削除したからその調整
+				removeReplaceTo = true
+				break
+			default:
+				log.Print("MCID: " + string(binary[i:i+NameLength]) + " を発見しました")
+				i = i + NameLength + 3
+				//後々のためにcount
+				playerScores++
+				break
+			}
+			if binary[i-2] == 10 {
+				break
+			}
+		}
+	}
+	log.Print("スコアの置換が終了しました")
+	if removeReplaceTo {
+		for i := 0; i < len(binary); i++ {
+			if string(binary[i:i+12]) == "PlayerScores" {
+				log.Print("変更後のPlayerScores: " + fmt.Sprint(playerScores))
+				//書き換えた後のPlayerScoresをint to byteにする
+				result := []byte{0, 0, 0, 0}
+				if playerScores >= (256 * 256 * 256) {
+					result[0] = byte(playerScores / (256 * 256 * 256))
+					playerScores = playerScores % (256 * 256 * 256)
+				}
+				if playerScores >= (256 * 256) {
+					result[1] = byte(playerScores / (256 * 256))
+					playerScores = playerScores % (256 * 256)
+				}
+				if playerScores >= (256) {
+					result[2] = byte(playerScores / (256))
+					playerScores = playerScores % (256)
+				}
+				if playerScores >= (0) {
+					result[3] = byte(playerScores)
+				}
+
+				i = i + 12 + 4
+				dummyByteArray := []byte{}
+				dummyByteArray = append(dummyByteArray, binary[:i-4]...)
+				dummyByteArray = append(dummyByteArray, byte(playerScores))
+				dummyByteArray = append(dummyByteArray, binary[i+1:]...)
+				binary = dummyByteArray
+				break
+			}
+		}
+	}
+
+	file, err := os.Create("new_scoreboard.dat")
+	if err != nil {
+		log.Println("ファイルの作成に失敗しました")
+		log.Println("--Error-- --Error-- --Error-- --Error-- --Error-- --Error-- --Error--")
+		log.Println(err)
+		log.Println("--Error-- --Error-- --Error-- --Error-- --Error-- --Error-- --Error--")
+		return
+	}
+	defer file.Close()
+	err = makeGzip(file, binary)
+	if err != nil {
+		log.Println("データの圧縮 もしくは 書き換え に失敗しました")
+		log.Println("--Error-- --Error-- --Error-- --Error-- --Error-- --Error-- --Error--")
+		log.Println(err)
+		log.Println("--Error-- --Error-- --Error-- --Error-- --Error-- --Error-- --Error--")
+		return
+	}
+
+}
+
+func makeGzip(dst io.Writer, content []byte) error {
+	zw, err := gzip.NewWriterLevel(dst, gzip.BestCompression)
+	if err != nil {
+		return err
+	}
+	defer zw.Close()
+
+	if _, err := zw.Write(content); err != nil {
+		return err
+	}
+	return nil
+}

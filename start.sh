@@ -1,0 +1,1 @@
+go run main.go -file="/home/pi/nurture_debug/scoreboard/scoreboard_rin.dat" -key="" -upper=false
