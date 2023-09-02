@@ -1,3 +1,3 @@
-module github.com/atomu21263/scoreboargo
+module github.com/aatomu/scoreboargo
 
-go 1.17
+go 1.20
